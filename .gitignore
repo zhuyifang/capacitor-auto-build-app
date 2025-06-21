@@ -1,0 +1,10 @@
+/.idea/
+/android/
+/build/
+/certificate/
+/ios/
+node_modules/
+/src/
+build.config.js
+capacitor.config.json
+package-lock.json
