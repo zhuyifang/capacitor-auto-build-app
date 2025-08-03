@@ -5,6 +5,7 @@
 /ios/
 node_modules/
 /src/
+/www/
 build.config.js
 capacitor.config.json
 package-lock.json
