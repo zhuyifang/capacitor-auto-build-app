@@ -17,6 +17,10 @@ const buildConfig = {
         buildNumber: 200004,
         // PWA 的启动 URL (应用将封装和加载的外部 PWA 地址)
         startUrl: "https://vooh.pages.dev/", // **请务必替换为你的 PWA 实际部署 URL**
+        // 应用类型: 'pwa' 或 'local'
+        appType: "pwa", // 新增配置项，用于区分应用类型
+        // 本地项目的编译后路径（仅当 appType 为 'local' 时使用）
+        localWebDir: "dist", // 本地项目构建后的目录路径
         // 应用的主题颜色 (用于 Android 任务管理器颜色，以及 PWA 浏览器 UI 元素)
         themeColor: "#4DBA87",
         // 应用的背景颜色 (用于 PWA 启动画面，以及 Android 启动页背景)
