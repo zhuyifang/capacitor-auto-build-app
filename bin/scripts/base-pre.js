@@ -19,7 +19,10 @@ async function basePreProcess() {
     if (appInfo.appType === 'local') {
         console.log('📁 处理本地 Web 资源...');
         // 将编译后的本地资源复制到 www 目录
-        const localWebDir = path.join(config.PROJECT_ROOT, appInfo.localWebDir);
+        // 正确处理绝对路径和相对路径
+        const localWebDir = path.isAbsolute(appInfo.localWebDir) 
+            ? appInfo.localWebDir 
+            : path.join(config.PROJECT_ROOT, appInfo.localWebDir);
         const webDir = path.join(config.PROJECT_ROOT, 'www');
         
         // 检查源目录是否存在
@@ -35,8 +38,24 @@ async function basePreProcess() {
         await fs.mkdir(webDir, { recursive: true });
         
         // 复制本地资源到 www 目录
-        await execa('cp', ['-r', path.join(localWebDir, '.'), webDir]);
-        console.log('✅ 本地 Web 资源处理完成');
+        // 修复目录结构问题，确保正确复制文件
+        try {
+            // 使用 execa 执行复制命令，直接复制目录内容而不是目录本身
+            await execa('cp', ['-r', path.join(localWebDir, '*'), webDir], { cwd: config.PROJECT_ROOT, shell: true });
+        } catch (copyError) {
+            // 如果 cp 命令失败，尝试使用 node.js 方法
+            console.log('🔄 使用 Node.js 方法复制文件...');
+            await copyDirContents(localWebDir, webDir);
+        }
+        
+        // 验证复制是否成功
+        try {
+            await fs.access(path.join(webDir, 'index.html'));
+            console.log('✅ 本地 Web 资源处理完成');
+        } catch (error) {
+            console.error(`❌ 复制后 www 目录中未找到 index.html 文件`);
+            throw new Error('本地 Web 资源复制失败，缺少 index.html 文件');
+        }
     }
 
     // --- 1. 更新 Capacitor 配置文件 (capacitor.config.json) ---
@@ -69,6 +88,39 @@ async function basePreProcess() {
             // 本地应用不需要 server 配置
             delete capConfig.server;
         }
+        
+        // 更新 Android 构建选项
+        if (!capConfig.android) {
+            capConfig.android = {};
+        }
+        if (!capConfig.android.buildOptions) {
+            capConfig.android.buildOptions = {};
+        }
+        
+        // 使用 build.config.js 中的 Android 配置
+        capConfig.android.buildOptions = {
+            keystorePath: androidConfig.keystorePath,
+            keystorePassword: androidConfig.keystorePassword,
+            keystoreAlias: androidConfig.keyAlias,
+            keystoreAliasPassword: androidConfig.keyPassword,
+            releaseType: "APK",
+            signingType: "apksigner"
+        };
+        
+        // 更新 iOS 构建选项，但保留原有结构
+        if (!capConfig.ios) {
+            capConfig.ios = {};
+        }
+        if (!capConfig.ios.buildOptions) {
+            capConfig.ios.buildOptions = {};
+        }
+        
+        // 仅更新必要的配置项，保留其他可能需要的配置
+        capConfig.ios.buildOptions.signingCertificate = iosConfig.p12Path;
+        capConfig.ios.buildOptions.provisioningProfile = iosConfig.provisioningProfile;
+        capConfig.ios.buildOptions.certificatePassword = iosConfig.p12Password;
+        
+        capConfig.ios.preferredContentMode = "mobile";
 
         // 保存更新后的配置
         await fs.writeFile(capConfigPath, JSON.stringify(capConfig, null, 2));
@@ -116,6 +168,27 @@ async function basePreProcess() {
     }
 
     console.log('🎉 基础预处理完成。');
+}
+
+/**
+ * 递归复制目录内容的辅助函数
+ * @param {string} src - 源目录路径
+ * @param {string} dest - 目标目录路径
+ */
+async function copyDirContents(src, dest) {
+    const entries = await fs.readdir(src, { withFileTypes: true });
+    
+    for (let entry of entries) {
+        const srcPath = path.join(src, entry.name);
+        const destPath = path.join(dest, entry.name);
+        
+        if (entry.isDirectory()) {
+            await fs.mkdir(destPath, { recursive: true });
+            await copyDirContents(srcPath, destPath);
+        } else {
+            await fs.copyFile(srcPath, destPath);
+        }
+    }
 }
 
 export { basePreProcess };

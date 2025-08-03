@@ -183,6 +183,9 @@ async function iosBuild(shouldBuild, cliArgs) {
         await execa('security', ['import', fullP12Path, '-P', p12Password, '-k', keychainPath, '-A', '-T', '/usr/bin/codesign', '-T', '/usr/bin/security'], {stdio: 'inherit'});
         // await execa(`security`, ['import', fullP12Path, '-k', 'login.keychain', '-P', p12Password, '-A']);
 
+        // 设置钥匙串分区列表，减少或消除密码输入对话框
+        await execa('security', ['set-key-partition-list', '-S', 'apple-tool:,apple:', '-s', '-k', keychainPassword, keychainPath], {stdio: 'inherit'});
+        
         console.log('✅ P12 证书导入成功。');
 
         // 将描述文件复制到 Xcode 识别的目录
@@ -331,7 +334,8 @@ async function iosBuild(shouldBuild, cliArgs) {
         }
 
         // 5. 打包成功也将ipa复制到指定目录
-        const destArtifactsDir = path.resolve(projectRoot, artifactsDir);
+        // 按照要求使用 displayName 作为子目录: ./build/{displayName}/{fileName}
+        const destArtifactsDir = path.resolve(projectRoot, artifactsDir, displayName);
         await fs.mkdir(destArtifactsDir, {recursive: true});
 
         const now = new Date();

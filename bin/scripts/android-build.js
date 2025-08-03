@@ -30,76 +30,113 @@ async function getLatestBuildToolsVersion(androidSdkRoot) {
         return 0;
     });
 
-    const latestVersion = versions[0];
-    if (!latestVersion) {
-        throw new Error('未找到任何 Android Build-Tools 版本。');
-    }
-    return latestVersion;
+    // 返回最新版本
+    return versions[0];
 }
 
 /**
- * 执行 Android 应用的打包构建。
- * @param {boolean} shouldBuild - 是否执行实际的 `npx cap build` 命令。
- * @param {string[]} cliArgs - 传递给主脚本的原始命令行参数。
+ * 格式化日期和时间，用于文件名。
+ * @param {Date} date - 日期对象。
+ * @param {string} format - 格式字符串，支持 YYYY, MM, DD, HH, mm, ss。
+ * @returns {string} 格式化后的字符串。
+ */
+function formatDateTime(date, format) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+
+    return format
+        .replace(/YYYY/g, year)
+        .replace(/MM/g, month)
+        .replace(/DD/g, day)
+        .replace(/HH/g, hours)
+        .replace(/mm/g, minutes)
+        .replace(/ss/g, seconds);
+}
+
+/**
+ * 构建 Android 项目。
+ * @param {boolean} shouldBuild 是否执行构建。
+ * @param {Array<string>} cliArgs 命令行参数。
  */
 async function androidBuild(shouldBuild, cliArgs) {
     if (!shouldBuild) {
-        console.log('ℹ️ 未检测到 --build 参数，跳过 Android 打包阶段。');
+        console.log('⚠️  跳过 Android 构建。');
         return;
     }
 
-    console.log('\n📦 开始打包 Android APK/AAB...');
-
-    const capBuildArgs = ['cap', 'build', 'android'];
-
-    // --- 解决 apksigner ENOENT 问题的关键：构建并传递完整的 PATH 环境变量 ---
-    const androidSdkRoot = process.env.ANDROID_HOME;
-
-    if (!androidSdkRoot) {
-        console.error('❌ 环境变量 ANDROID_HOME 未设置。无法找到 Android SDK 工具。');
-        console.error('请确保 ANDROID_HOME 指向你的 Android SDK 根目录。');
-        process.exit(1);
-    }
-    console.log(`ℹ️ 检测到 ANDROID_HOME: ${androidSdkRoot}`);
-
-    let latestBuildToolsVersion = '';
-    try {
-        latestBuildToolsVersion = await getLatestBuildToolsVersion(androidSdkRoot); // 调用辅助函数
-        console.log(`ℹ️ 已检测到最新 Android Build-Tools 版本: ${latestBuildToolsVersion}`);
-    } catch (error) {
-        console.error(`❌ 无法自动检测 Build-Tools 版本: ${error.message}`);
-        console.error("请确保 Android SDK 安装完整，且 Build-Tools 目录存在有效版本。");
-        process.exit(1);
-    }
-
-    // 构建自定义 PATH，确保 platform-tools 和 build-tools 路径在前
-    const customPath = [
-        path.join(androidSdkRoot, 'platform-tools'),
-        path.join(androidSdkRoot, 'build-tools', latestBuildToolsVersion),
-        process.env.PATH // 继承现有的 PATH
-    ].filter(Boolean) // 过滤掉空值，以防某个路径不存在
-        .join(path.delimiter); // 使用系统特定的路径分隔符 (例如 macOS/Linux 是 ':', Windows 是 ';')
-
-    // 创建传递给子进程的环境变量对象
-    const envForChildProcess = {
-        ...process.env, // 继承所有其他环境变量
-        ANDROID_HOME: androidSdkRoot, // 显式设置 ANDROID_HOME，Gradle 可能会用到
-        PATH: customPath,             // 覆盖子进程的 PATH
-    };
+    const appInfo = buildConfig.app;
+    const androidConfig = buildConfig.android;
+    const outputConfig = buildConfig.output;
 
     try {
-        console.log(`🚀 执行 Gradle Sync 命令: ./gradlew build`);
-        await execa('./gradlew',['build'],{cwd: config.ANDROID_DIR,stdio: 'inherit',env:envForChildProcess})
-        console.log(`🚀 执行 Capacitor Build 命令: npx ${capBuildArgs.join(' ')}`);
-        await execa('npx', capBuildArgs, {
-            stdio: 'inherit', // 将子进程的输出直接传递给父进程
-            cwd: config.PROJECT_ROOT, // 在项目根目录执行命令
-            env: envForChildProcess // 传递包含正确 PATH 的环境变量
-        });
-        console.log(`\n✅ Android 打包完成！`);
+        // --- 1. 执行 npx cap build android ---
+        console.log('🤖 正在构建 Android 项目...');
+        const buildArgs = ['cap', 'build', 'android'];
+
+        // 检查是否需要添加额外的构建参数
+        if (cliArgs.includes('--prod')) {
+            buildArgs.push('--prod');
+        }
+
+        await execa('npx', buildArgs, { cwd: config.PROJECT_ROOT, stdio: 'inherit' });
+        console.log('✅ Android 项目构建成功。');
+
+        // --- 2. 将生成的 APK 复制到指定目录 ---
+        console.log('📂 正在复制 APK 到指定目录...');
+        
+        // 确定源 APK 路径
+        const apkDir = path.join(config.PROJECT_ROOT, 'android/app/build/outputs/apk/release');
+        let sourceApkPath = path.join(apkDir, 'app-release.apk');
+        
+        // 检查 APK 是否存在，如果不存在则检查签名版本
+        try {
+            await fs.access(sourceApkPath);
+        } catch (error) {
+            // 检查签名版本
+            const signedApkPath = path.join(apkDir, 'app-release-signed.apk');
+            try {
+                await fs.access(signedApkPath);
+                sourceApkPath = signedApkPath;
+            } catch (signedError) {
+                // 列出目录中的所有 APK 文件以帮助调试
+                try {
+                    const files = await fs.readdir(apkDir);
+                    const apkFiles = files.filter(file => file.endsWith('.apk'));
+                    console.log('📁 APK 目录中的文件:', apkFiles);
+                } catch (dirError) {
+                    console.log('❌ 无法读取 APK 目录:', dirError.message);
+                }
+                
+                throw new Error(`生成的 APK 文件不存在: ${sourceApkPath} 或 ${signedApkPath}`);
+            }
+        }
+
+        // 格式化目标文件名
+        const date = new Date();
+        const formattedApkName = outputConfig.androidApkNameFormat
+            .replace(/{versionName}/g, appInfo.versionName)
+            .replace(/{buildNumber}/g, appInfo.buildNumber)
+            .replace(/{date}/g, formatDateTime(date, 'YYYYMMDD'))
+            .replace(/{time}/g, formatDateTime(date, 'HHmmss'));
+
+        // 确定目标路径 - 按照要求使用 displayName 作为子目录
+        const targetDir = path.join(config.PROJECT_ROOT, outputConfig.artifactsDir, appInfo.displayName);
+        const targetApkPath = path.join(targetDir, formattedApkName);
+
+        // 确保目标目录存在
+        await fs.mkdir(targetDir, { recursive: true });
+
+        // 复制 APK 文件
+        await fs.copyFile(sourceApkPath, targetApkPath);
+        console.log(`✅ APK 已复制到: ${targetApkPath}`);
+
     } catch (error) {
         console.error(`❌ Android 打包失败: ${error.message}`);
-        throw error; // 重新抛出错误，由主函数捕获
+        throw error;
     }
 }
 
